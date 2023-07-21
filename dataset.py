@@ -1,34 +1,49 @@
-# write an autoencode for 3d data
+"""
+Dataset class for the voxel data, and transforms for the voxels
+to do it complatible with the model.
+"""
 
-from typing import Tuple
+from typing import Tuple, Union
 import os
 
 import numpy as np
 import torch
 from torch.utils.data.dataset import Dataset
 import torch.nn.functional as F
+import matplotlib.pyplot as plt
 
 
 class VoxelDataset(Dataset):
+
+    """
+    Since the voxels are a numpy arrays, they assumed to be in the shape of [height, width, depth].
+    The model expects the voxels to have a depth that is a multiple of the chunk size,
+    so we will pad the depth dimension to the nearest multiple of the chunk size.
+    """
 
     def __init__(self, root, folder, transform, noise, chunk_size=16):
         self.transform = transform
         self.noise = noise
         self.chunk_size = chunk_size
+        self.files = []
 
-        self.files = [os.path.join(root, folder, f) for f in (os.listdir(os.path.join(root, folder))) if f.endswith('.npy')]
+        for file in os.listdir(os.path.join(root, folder)):
+            if file.endswith('.npy'):
+                self.files.append(os.path.join(root, folder, file))
 
     def __getitem__(self, index) -> Tuple[torch.Tensor, torch.Tensor]:
         data = np.load(self.files[index])
 
-        height, width, depth = data.shape
-        
+        *_, depth = data.shape
+
         # make sure the data channel is a multiple of the chunk size
         if self.chunk_size > depth:
-            data = np.pad(data, ((0, 0), (0, 0), (0, self.chunk_size - depth)), 'constant', constant_values=0)
+            data = np.pad(data, ((0, 0), (0, 0), (0, self.chunk_size - depth)),
+                          'constant', constant_values=0)
         if self.chunk_size < depth:
             if depth % self.chunk_size != 0:
-                data = np.pad(data, ((0, 0), (0, 0), (0, self.chunk_size - (depth % self.chunk_size))), 'constant', constant_values=0)
+                depth_pad = self.chunk_size - (depth % self.chunk_size)
+                data = np.pad(data, ((0, 0), (0, 0), (0, depth_pad)), 'constant', constant_values=0)
 
         data = self.transform(data)
         noised_data = self.noise(data.clone())
@@ -40,6 +55,11 @@ class VoxelDataset(Dataset):
 
 
 class VoxelTestDataset(Dataset):
+
+    """
+    Test folder have a subfolder for each class.
+    We will return the class folder name as the label.
+    """
 
     def __init__(self, root, folder, transform, chunk_size=16):
 
@@ -58,14 +78,16 @@ class VoxelTestDataset(Dataset):
 
         class_folder = self.files[index].split('\\')[-2]
 
-        height, width, depth = data.shape
+        *_, depth = data.shape
 
         # make sure the data channel is a multiple of the chunk size
         if self.chunk_size > depth:
-            data = np.pad(data, ((0, 0), (0, 0), (0, self.chunk_size - depth)), 'constant', constant_values=0)
+            data = np.pad(data, ((0, 0), (0, 0), (0, self.chunk_size - depth)),
+                          'constant', constant_values=0)
         if self.chunk_size < depth:
             if depth % self.chunk_size != 0:
-                data = np.pad(data, ((0, 0), (0, 0), (0, self.chunk_size - (depth % self.chunk_size))), 'constant', constant_values=0)
+                depth_pad = self.chunk_size - (depth % self.chunk_size)
+                data = np.pad(data, ((0, 0), (0, 0), (0, depth_pad)), 'constant', constant_values=0)
 
         data = self.transform(data)
 
@@ -135,10 +157,77 @@ def find_max_shape(train_voxels: list)->Tuple[int, list]:
     return max_shape, unsquare_voxels
 
 
-if __name__ == '__name__':
+def plot_voxel_2d(voxel: np.ndarray, title: str='', dim: Union[int, str, None]=None):
+
+    """
+    Search for a slice with the highest sum of values and plot it.
+    If a dim is given, plot the slice with the highest sum of values in the given dim.
+
+    Args:
+        voxel (np.ndarray): the voxel to plot
+        title (str): the title of the plot
+        slice (int, str): the slice to plot:
+            0 or 'height' - plot the height slice
+            1 or 'width' - plot the width slice
+            2 or 'depth' - plot the depth slice
+
+    Returns:
+        None
+    """
+
+    fig = plt.figure(num=title)
+    if fig.axes:
+        plt.clf()
+
+    height_sum = voxel.sum(axis=(1, 2))
+    width_sum = voxel.sum(axis=(0, 2))
+    depth_sum = voxel.sum(axis=(0, 1))
+
+    max_sum = np.argmax(np.array([height_sum.max(), width_sum.max(), depth_sum.max()]))
+    dim = max_sum if dim is None else dim
+
+    max_height = np.argmax(height_sum)
+    max_width = np.argmax(width_sum)
+    max_depth = np.argmax(depth_sum)
+
+    if dim == 0 or dim == 'height':
+        plt.imshow(voxel[max_height, :, :])
+
+    elif dim == 1 or dim == 'width':
+        plt.imshow(voxel[:, max_width, :])
+
+    elif dim == 2 or dim == 'depth':
+        plt.imshow(voxel[:, :, max_depth])
+    
+    plt.title(title)
+    plt.show()
+    plt.pause(0.001)
+
+
+def plot_voxel_3d(data: np.ndarray, title: str=''):
+
+    """
+    Plot the voxel in 3d
+
+    Args:
+        data (np.ndarray): the voxel to plot
+        title (str): the title of the plot
+
+    Returns:
+        None
+    """
+
+    fig = plt.figure(num=title)
+    ax = fig.add_subplot(111, projection='3d')
+    z, x, y = data.nonzero()
+    ax.scatter(x, y, z, c=z, alpha=1)
+    plt.show()
+
+
+if __name__ == '__main__':
 
     ROOT = r'C:\Users\tnoy\Documents\Database\educatinal'
-    
+
     train_voxels = []
     for file in os.listdir(os.path.join(ROOT, 'train')):
         if file.endswith('.npy'):
@@ -147,3 +236,5 @@ if __name__ == '__name__':
     max_shape, unsquare_voxels = find_max_shape(train_voxels)
     print(f'max shape: {max_shape}')
     print(f'{len(unsquare_voxels)} voxels are not square')
+
+    plot_voxel_2d(np.load(train_voxels[10]), 'original voxel')
