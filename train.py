@@ -15,7 +15,8 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 
 from dataset import (VoxelDataset, Noise, Permute, Resize, DepthPad,
-                     find_max_shape, plot_voxel_2d)
+                     Normalize, find_max_shape, most_interesting_slice,
+                     plot_voxel_2d)
 from model import AutoEncoder3d
 
 
@@ -42,7 +43,7 @@ def train(root: str):
 
     transforms = tvt.Compose([tvt.ToTensor(), Permute((2, 0, 1)),
                               Resize((max_shape, max_shape)),
-                              DepthPad(max_shape)])
+                              Normalize('min_max'), DepthPad(max_shape)])
 
     noise = tvt.Compose([Noise(1)])
     dataset = VoxelDataset(ROOT, 'train', transforms, noise)
@@ -75,9 +76,16 @@ def train(root: str):
             if i % 10 == 0:
                 losses.append(loss.item())
                 print(f'epoch: {epoch}, loss: {loss.item()}')
+                data_slice, dim, loc = most_interesting_slice(data[0].cpu().numpy(), return_location=True)
+                predicted_slice = output[0].detach().cpu().numpy().take(loc, axis=dim)
+                plt.close('all')
+                plot_voxel_2d(data_slice, 'data')
+                plot_voxel_2d(predicted_slice, 'predicted')
+                print("debug")
+                plot_loss(losses)
+
         # save the model
         torch.save(model.state_dict(), 'model.pt')
-        plot_loss(losses)
 
 
 if __name__ == '__main__':

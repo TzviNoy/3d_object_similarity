@@ -124,14 +124,45 @@ class Resize:
         return F.interpolate(x.unsqueeze(1), size=self.size, mode='nearest').squeeze(1)
     
 
-class  DepthPad:
+class DepthPad:
     def __init__(self, max_depth):
         self.max_depth = max_depth
 
     def __call__(self, x: torch.Tensor) -> torch.Tensor:
         return F.pad(x, (0, 0, 0, 0, 0, self.max_depth - x.shape[0]), 'constant', 0)
 
-        
+
+class Normalize:
+
+    """
+    Normalize the voxel according to the given mode. Can be one of the following:
+        'min_max' - normalize the voxel to be in the range [0, 1]
+        'normal' - normalize the voxel to have a mean of 0 and std of 1
+        'given' - normalize the voxel with the given mean and std
+    """
+
+    def __init__(self, mode: str, mean: float=torch.nan, std: float=torch.nan):
+        self.mode = mode
+        self.mean = mean
+        self.std = std
+
+    def __call__(self, x: torch.Tensor) -> torch.Tensor:
+
+        if self.mode == 'min_max':
+            x = (x - x.min()) / (x.max() - x.min() + 1e-8)
+
+        elif self.mode == 'normal':
+            x = (x - x.mean()) / (x.std() + 1e-8)
+
+        elif self.mode == 'given':
+            x = (x - self.mean) / (self.std + 1e-8)
+
+        else:
+            raise ValueError(f'Unknown mode: {self.mode}')
+
+        return x
+
+
 def find_max_shape(train_voxels: list)->Tuple[int, list]:
 
     """
@@ -157,19 +188,48 @@ def find_max_shape(train_voxels: list)->Tuple[int, list]:
     return max_shape, unsquare_voxels
 
 
-def plot_voxel_2d(voxel: np.ndarray, title: str='', dim: Union[int, str, None]=None):
+def most_interesting_slice(voxel: np.ndarray, return_location: bool) -> Union[np.ndarray, Tuple[np.ndarray, int, int]]:
 
     """
-    Search for a slice with the highest sum of values and plot it.
-    If a dim is given, plot the slice with the highest sum of values in the given dim.
+    Search for a slice with the highest sum of values and return it.
+    If return_location is True, return the slice,
+    the dimension and the location of the slice.
+
+    Args:
+        voxel (np.ndarray): the voxel to plot
+        return_location (bool): whether to return the location of the slice
+
+    Returns:
+        slice (np.ndarray): the most interesting slice
+        dim (int): the dimension with the highest sum of values
+        location (int): the location of the slice
+    """
+
+    height_sum = voxel.sum(axis=(1, 2))
+    width_sum = voxel.sum(axis=(0, 2))
+    depth_sum = voxel.sum(axis=(0, 1))
+
+    max_height = np.argmax(height_sum)
+    max_width = np.argmax(width_sum)
+    max_depth = np.argmax(depth_sum)
+
+    max_dim = np.argmax(np.array([height_sum.max(), width_sum.max(), depth_sum.max()]))
+    max_sum = np.array([max_height, max_width, max_depth])[max_dim]
+    voxel2plot = voxel.take(max_sum, axis=max_dim)
+
+    if return_location:
+        return voxel2plot, max_dim, max_sum
+    return voxel2plot
+
+
+def plot_voxel_2d(voxel: Union[np.ndarray, torch.Tensor], title: str=''):
+
+    """
+    imshow 2d slice of the voxel
 
     Args:
         voxel (np.ndarray): the voxel to plot
         title (str): the title of the plot
-        slice (int, str): the slice to plot:
-            0 or 'height' - plot the height slice
-            1 or 'width' - plot the width slice
-            2 or 'depth' - plot the depth slice
 
     Returns:
         None
@@ -179,26 +239,7 @@ def plot_voxel_2d(voxel: np.ndarray, title: str='', dim: Union[int, str, None]=N
     if fig.axes:
         plt.clf()
 
-    height_sum = voxel.sum(axis=(1, 2))
-    width_sum = voxel.sum(axis=(0, 2))
-    depth_sum = voxel.sum(axis=(0, 1))
-
-    max_sum = np.argmax(np.array([height_sum.max(), width_sum.max(), depth_sum.max()]))
-    dim = max_sum if dim is None else dim
-
-    max_height = np.argmax(height_sum)
-    max_width = np.argmax(width_sum)
-    max_depth = np.argmax(depth_sum)
-
-    if dim == 0 or dim == 'height':
-        plt.imshow(voxel[max_height, :, :])
-
-    elif dim == 1 or dim == 'width':
-        plt.imshow(voxel[:, max_width, :])
-
-    elif dim == 2 or dim == 'depth':
-        plt.imshow(voxel[:, :, max_depth])
-    
+    plt.imshow(voxel, cmap='gray')
     plt.title(title)
     plt.show()
     plt.pause(0.001)
